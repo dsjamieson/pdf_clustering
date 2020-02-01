@@ -17,6 +17,7 @@ PeriodicBox::PeriodicBox(char * t_snapshot_filename_base, char * t_snapshot_file
 	mean_num_bin_particles = (double) total_num_particles/num_mesh_r;
 	power_normalization = bin_volume*bin_volume/box_volume;
 	fprintf(stdout, "Using %d OMP threads\n", num_threads);
+
 }
 
 void PeriodicBox::readGadgetHeader(char * t_snapshot_filename_base) {

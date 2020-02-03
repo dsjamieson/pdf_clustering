@@ -127,6 +127,9 @@ void PeriodicBox::readVolumes(char * t_volume_filename) {
 			thread_mean_density += density;
 			thread_mean_log_density_ratio += log_density_ratios[i];
 			thread_mean_log_density_ratio_squared += log_density_ratios[i]*log_density_ratios[i];
+			/*if(i == 65021) {
+				fprintf(stdout, "\nvolume read: %.3e %.3e %.3e %.3e\n", volume, density, log_density_ratios[i], pdf_mean_density); //
+			}*/
 		}
 		fclose(volume_file);
 		#pragma omp critical
@@ -165,7 +168,6 @@ void PeriodicBox::loadVoroGadgetCIC() {
 		for(unsigned long j = 0; j < density_pdf_meshes.size(); j++)
 			density_pdf_meshes[j][i] = 0.;
 	}
-
 	#pragma omp parallel for
 	for(int i = 0; i < num_snapshot_files; i++){
 		char snapshot_filename[200];
@@ -173,7 +175,7 @@ void PeriodicBox::loadVoroGadgetCIC() {
 		FILE * id_file;
 		gadget_header snapshot_header;
 		float temp_position[3];
-		double position[3];
+		std::vector<double> position(3);
 		unsigned int num_particles, id;
 		if(num_snapshot_files > 1)
 			sprintf(snapshot_filename, "%s.%d", snapshot_filename_base, i);
@@ -198,17 +200,38 @@ void PeriodicBox::loadVoroGadgetCIC() {
 			for (int j = 0; j < 3; j++){
 				position[j] =  ((double) temp_position[j])*1.e-3;
 			}
-			distributePDFCIC(position, log_density_ratios[id]);
+			distributePDFCIC(position, log_density_ratios[id], id);
 		}
 		fclose(snapshot_file);
 		fclose(id_file);
 	}
+	std::vector<double>	full_density_pdf(num_sample_points, 0.);
 	#pragma omp parallel for
 	for(int i = 0; i < num_mesh_r; i++) {
-		for(unsigned long j = 0; j < density_pdf_meshes.size(); j++)
+		for(unsigned long j = 0; j < density_pdf_meshes.size(); j++) {
 			density_pdf_meshes[j][i] /= density_mesh[i];
+			#pragma omp atomic
+			full_density_pdf[j] += density_pdf_meshes[j][i];
+		}
 		density_mesh[i] = density_mesh[i]/mean_num_bin_particles - 1.;
 	}
+
+	/* Test file */
+	FILE * test_file = fopen("test_density_pdf.out", "w+");
+	for(unsigned long i = 0; i < density_pdf_meshes.size(); i++) {
+		full_density_pdf[i] /= num_mesh_r;
+		fprintf(test_file, "%.6e %.6e", exp(kde_sample_points[i]), full_density_pdf[i]/exp(kde_sample_points[i]));
+		for(int j = 0; j < num_mesh_r; j++)
+			fprintf(test_file, " %.6e", density_pdf_meshes[i][j]/exp(kde_sample_points[i]));	
+		fprintf(test_file, "\n");
+	} 
+	fclose(test_file);
+	fprintf(stdout, " test");
+	printTimedDone(2);
+	exit(0);
+	/* End test */
+
+
 	double mean_density_pdf;
 	for(unsigned long i = 0; i < density_pdf_meshes.size(); i++) {
 		mean_density_pdf = 0.;
@@ -223,17 +246,24 @@ void PeriodicBox::loadVoroGadgetCIC() {
 	return;
 }
 
-void PeriodicBox::distributePDFCIC(double t_position[3], double t_log_density_ratio) {
-	std::vector<int> mesh_indices(8, 0.);
+void PeriodicBox::distributePDFCIC(std::vector<double> & t_position, double & t_log_density_ratio, unsigned int t_id) {
+	std::vector<int> mesh_indices(6);
 	std::vector<double> weights(6);
 	int index;
 	double weight;
+
 	for(int i = 0; i < 3; i++) {
 		mesh_indices[i] = (int) floor(t_position[i]/bin_length);
 		mesh_indices[i + 3] = (mesh_indices[i] + 1)%num_mesh_1d;
 		weights[i] = 1. + mesh_indices[i] - t_position[i]/bin_length;
 		weights[i + 3] = 1. - weights[i];
 	}
+	/*if(t_id == 65021) {
+		fprintf(stdout, "\npos: %u %.8e %.8e %.8e\n", t_id, t_position[0], t_position[1], t_position[2]);
+		fprintf(stdout, "ws1: %u %d %d %d %.3e %.3e %.3e\n", t_id, mesh_indices[0], mesh_indices[1], mesh_indices[2], weights[0], weights[1], weights[2]);
+		fprintf(stdout, "ws2: %u %d %d %d %.3e %.3e %.3e\n", t_id, mesh_indices[3], mesh_indices[4], mesh_indices[5], weights[3], weights[4], weights[5]);
+	}*/
+
 	for(int i = 0; i < 2; i++) {
 		for(int j = 0; j < 2; j++) {
 			for(int k = 0; k < 2; k++) {
@@ -258,16 +288,25 @@ void PeriodicBox::distributeSampleKernel(int & t_index, double & t_log_density_r
 			max_sample_index = num_sample_points - 1;
 		for(int i = start_sample_index; i <= max_sample_index; i++) {
 			#pragma omp atomic
-			density_pdf_meshes[i][t_index] += getGaussianKernalValue(kde_sample_points[i], kernel_width, t_log_density_ratio)*weight/total_num_particles;
+			density_pdf_meshes[i][t_index] += getGaussianKernalValue(kde_sample_points[i], kernel_width, t_log_density_ratio)*weight;
 		}
 	}
+	
+	/*
+	char filename[200];
+	sprintf(filename, "test_kernel_%d.out", t_index);
+	FILE * test_kernel = fopen(filename, "w+");
+	for(unsigned long i = 0; i < kde_sample_points.size(); i++) {
+		fprintf(test_kernel, "%.8e %.8e\n", kde_sample_points[i], density_pdf_meshes[i][t_index]);
+	}
+	fclose(test_kernel);
+	*/
 	return;
 }
 
 double PeriodicBox::getGaussianKernalValue(double & t_mean, double & t_sigma, double & t_x) {
 	return exp(-pow((t_x - t_mean)/t_sigma , 2)/2.)/sqrt(2.*PI_VALUE::PI)/t_sigma;
 }
-
 void PeriodicBox::computeMatterPowerSpectrum() {
 	fftw_init_threads(); 
 	fftw_plan_with_nthreads(num_threads); 

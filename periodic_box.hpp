@@ -94,7 +94,7 @@ class PeriodicBox {
 	void readGadgetHeader(char * t_snapshot_filename_base);
 	void readVolumes(char * t_volume_filename);
 	void loadVoroGadgetCIC();
-	void distributePDFCIC(double t_position[3], double t_log_density_ratio);
+	void distributePDFCIC(std::vector<double> & t_position, double & t_log_density_ratio, unsigned int t_id);
 	void distributeSampleKernel(int & t_index, double & t_log_density_ratio, double & weight);
 	double getGaussianKernalValue(double & t_mean, double & t_sigma, double & t_x);
 	void computeMatterPowerSpectrum();

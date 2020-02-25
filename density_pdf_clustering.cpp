@@ -9,8 +9,8 @@ DensityPDFClustering::DensityPDFClustering(double t_min_density_ratio, double t_
 	num_mesh_k = num_mesh_1d*num_mesh_1d*(num_mesh_1d/2 + 1);
 	min_density = t_min_density_ratio;
 	max_density = t_max_density_ratio;
-	log_min_density = log(min_density);
-	log_max_density = log(max_density);
+	log_min_density = log10(min_density);
+	log_max_density = log10(max_density);
 	num_sample_points = t_num_sample_points;
 	max_num_kernel_widths = 4.;
 	fprintf(stdout, "Using %d OMP threads\n", num_threads);
@@ -22,32 +22,34 @@ void DensityPDFClustering::computePDFClustering(char * t_snapshot_filename_base,
 	fprintf(stdout, "Loading Voronoi volumes..."); fflush(stdout);
 	readGadgetHeader(t_snapshot_filename_base);
 	readVolumes(t_volumes_filename);
-	printTimedDone(3);
+	printTimedDone(2);
 
 	fprintf(stdout, "Computing kernel width..."); fflush(stdout);
 	computeKDEWidth();
-	printTimedDone(3);
+	printTimedDone(2);
 
 	fprintf(stdout, "Distributing Gadget to mesh..."); fflush(stdout);
 	loadGadgetCIC(t_snapshot_filename_base);
-	printTimedDone(1);
+	printTimedDone(2);
 
 	fprintf(stdout, "Computing matter power spectrum..."); fflush(stdout);
 	computeMatterPowerSpectrum();
-	writePowers(t_pdf_clustering_filename);
+	writeVector(t_pdf_clustering_filename, wave_numbers);
+	appendVector(t_pdf_clustering_filename, matter_powers);
 	std::vector<double>	kde_sample_points_output(kde_sample_points.size());
 	for(unsigned long i = 0; i < kde_sample_points.size(); i++)
-		kde_sample_points_output[i] = kde_sample_points[i];
-	appendPowers(t_pdf_clustering_filename, kde_sample_points_output);
-	printTimedDone(2);
+		kde_sample_points_output[i] = pow(10., kde_sample_points[i]);
+	appendVector(t_pdf_clustering_filename, kde_sample_points_output);
+	printTimedDone(1);
 
 	fprintf(stdout, "Distributing volumes to meshes..."); fflush(stdout);
 	loadVoroCIC(t_volumes_snapshot_filename_base);
+	appendVector(t_pdf_clustering_filename, mean_density_pdf);
 	printTimedDone(1);
 
 	fprintf(stdout, "Computing PDF-matter power spectra...");fflush(stdout);
 	computePDFCrossPowerSpectrum(t_pdf_clustering_filename);
-	printTimedDone(2);
+	printTimedDone(1);
 	
 	fprintf(stdout, "Done\n");
 	return;
@@ -80,14 +82,14 @@ void DensityPDFClustering::readGadgetHeader(char * t_snapshot_filename_base) {
 }	
 
 void DensityPDFClustering::readVolumes(char * t_volumes_filename) {
-	double volumes_file_box_volume;
+	float volumes_file_box_volume;
 	unsigned int num_volumes;
 	FILE * volumes_file = fopen(t_volumes_filename, "rb");
 	if(!volumes_file) {
 		fprintf(stdout, "Error, could not open volumes file for reading\n");
 		exit(1);
 	}
-	fseek(volumes_file, sizeof(int), SEEK_CUR);
+	fseek(volumes_file, sizeof(unsigned int), SEEK_CUR);
 	fread(&volumes_file_box_volume, sizeof(float), 1, volumes_file);
 	fread(&num_volumes, sizeof(unsigned int), 1, volumes_file);
 	volumes.clear();
@@ -111,16 +113,16 @@ void DensityPDFClustering::computeKDEWidth() {
 		float log_density_ratio;
 		#pragma omp for
 		for(unsigned long i = 0; i < volumes.size()/2; i++) {
-			log_density_ratio = 1./volumes[2*i]/pdf_mean_density - 1.;
+			log_density_ratio = log10(1./volumes[2*i]/pdf_mean_density);
 			log_density_ratios[i] = log_density_ratio;
-			log_density_ratio = 1./volumes[2*i + 1]/pdf_mean_density - 1.;
+			log_density_ratio = log10(1./volumes[2*i + 1]/pdf_mean_density);
 			log_density_ratios[i] += log_density_ratio;
 		}
 		#pragma omp barrier
 		#pragma omp single
 		{
 			if(volumes.size()%2 == 1) {
-				log_density_ratio = 1./volumes[volumes.size()-1]/pdf_mean_density - 1.;
+				log_density_ratio = log10(1./volumes[volumes.size()-1]/pdf_mean_density);
 				log_density_ratios[0] += log_density_ratio; 
 			}
 		}
@@ -132,11 +134,7 @@ void DensityPDFClustering::computeKDEWidth() {
 		}
 		#pragma omp parallel for
 		for(unsigned long i = 0; i < log_density_ratios.size()/2; i++) {
-			log_density_ratios[2*i] +=  log_density_ratios[2*i + 1];
-		}
-		#pragma omp parallel for
-		for(unsigned long i = 0; i < log_density_ratios.size()/2; i++) {
-			log_density_ratios[i] +=  log_density_ratios[2*i];
+			log_density_ratios[i] +=  log_density_ratios[i + log_density_ratios.size()/2];
 		}
 		log_density_ratios.resize(log_density_ratios.size()/2);
 	}
@@ -147,40 +145,37 @@ void DensityPDFClustering::computeKDEWidth() {
 		float squared_log_density_ratio;
 		#pragma omp for
 		for(unsigned long i = 0; i < volumes.size()/2; i++) {
-			squared_log_density_ratio = 1./volumes[2*i]/pdf_mean_density - 1.;
-			squared_log_density_ratio = squared_log_density_ratio*squared_log_density_ratio;
+			squared_log_density_ratio = log10(1./volumes[2*i]/pdf_mean_density);
+			squared_log_density_ratio *= squared_log_density_ratio;
 			squared_log_density_ratios[i] = squared_log_density_ratio;
-			squared_log_density_ratio = 1./volumes[2*i+1]/pdf_mean_density - 1.;
-			squared_log_density_ratio = squared_log_density_ratio*squared_log_density_ratio;
+			squared_log_density_ratio = log10(1./volumes[2*i+1]/pdf_mean_density);
+			squared_log_density_ratio *= squared_log_density_ratio;
 			squared_log_density_ratios[i] += squared_log_density_ratio;
 		}
 		#pragma omp barrier
 		#pragma omp single
 		{
 			if(volumes.size()%2 == 1) {
-				squared_log_density_ratio = 1./volumes[volumes.size()-1]/pdf_mean_density - 1.;
+				squared_log_density_ratio = log10(1./volumes[volumes.size()-1]/pdf_mean_density);
+				squared_log_density_ratio *= squared_log_density_ratio;
 				squared_log_density_ratios[0] += squared_log_density_ratio; 
 			}
 		}
 	}
 	while(squared_log_density_ratios.size() > 1) {
 		if(squared_log_density_ratios.size()%2 == 1) {
-			squared_log_density_ratios[0] += squared_log_density_ratios[log_density_ratios.size()-1];
+			squared_log_density_ratios[0] += squared_log_density_ratios[squared_log_density_ratios.size()-1];
 			squared_log_density_ratios.pop_back(); 
 		}
 		#pragma omp parallel for
 		for(unsigned long i = 0; i < squared_log_density_ratios.size()/2; i++) {
-			squared_log_density_ratios[2*i] += squared_log_density_ratios[2*i + 1];
-		}
-		#pragma omp parallel for
-		for(unsigned long i = 0; i < squared_log_density_ratios.size()/2; i++) {
-			squared_log_density_ratios[i] += squared_log_density_ratios[2*i];
+			squared_log_density_ratios[i] += squared_log_density_ratios[i + squared_log_density_ratios.size()/2];
 		}
 		squared_log_density_ratios.resize(squared_log_density_ratios.size()/2);
 	}
 	mean_squared_log_density_ratio = squared_log_density_ratios[0]/volumes.size();
 	double sigma_log_density_ratio = sqrt((mean_squared_log_density_ratio - mean_log_density_ratio*mean_log_density_ratio)*volumes.size()/(volumes.size() - 1.));
-	kernel_width = 0.9*sigma_log_density_ratio*pow(volumes.size(), -1./5.);
+	kernel_width = 0.9*sigma_log_density_ratio*pow(volumes.size()/num_mesh_r, -1./5.);
 	max_edge_distance = max_num_kernel_widths*kernel_width;
 	min_edge_density = log_min_density - max_edge_distance;
 	max_edge_density = log_max_density + max_edge_distance;
@@ -189,12 +184,15 @@ void DensityPDFClustering::computeKDEWidth() {
 	half_num_sample_points_per_sample = num_sample_points_per_sample/2;
 	kde_sample_points.clear();
 	kde_sample_points.resize(num_sample_points);
-	for(unsigned long i = 0; i < kde_sample_points.size(); i++)
-		kde_sample_points[i] = log(min_density) + i*sample_width;
+	for(unsigned long i = 0; i < kde_sample_points.size(); i++) {
+		kde_sample_points[i] = log_min_density + i*sample_width;
+	}
 	return;
 }
 
 void DensityPDFClustering::loadGadgetCIC(char * t_snapshot_filename_base) {
+	density_mesh.clear();
+	density_mesh.resize(num_mesh_r);
 	#pragma omp parallel for
 	for(unsigned long i = 0; i < density_mesh.size(); i++) {
 		density_mesh[i] = 0;
@@ -233,7 +231,6 @@ void DensityPDFClustering::loadGadgetCIC(char * t_snapshot_filename_base) {
 	for(int i = 0; i < num_mesh_r; i++) {
 		density_mesh[i] = density_mesh[i]/mean_num_bin_particles - 1. ;
 	}
-	printTimedDone(2);
 	return;
 }
 
@@ -266,8 +263,12 @@ void DensityPDFClustering::loadVoroCIC(char * t_volumes_snapshot_filename_base) 
 	density_pdf_meshes.resize(num_sample_points);
 	density_mesh.clear();
 	density_mesh.resize(num_mesh_r);
-	for(unsigned long i = 0; i < density_pdf_meshes.size(); i++)
+	mean_density_pdf.clear();
+	mean_density_pdf.resize(num_sample_points);
+	for(unsigned long i = 0; i < density_pdf_meshes.size(); i++) {
+		mean_density_pdf[i] = 0.;
 		density_pdf_meshes[i].resize(num_mesh_r);
+	}
 	#pragma omp parallel for
 	for(unsigned long i = 0; i < density_mesh.size(); i++) {
 		density_mesh[i] = 0.;
@@ -302,7 +303,7 @@ void DensityPDFClustering::loadVoroCIC(char * t_volumes_snapshot_filename_base) 
 			fprintf(stdout, "Error, volumes positions file inconsistent with volumes file, number of tracers does not match\n");
 			exit(0);
 		}
-		if(snapshot_header.box_length != box_length) {
+		if(snapshot_header.box_length*1.e-3 != box_length) {
 			fprintf(stdout, "Error, volumes positions file inconsistent with volumes file, box_length does not match\n");
 			exit(0);
 		}
@@ -316,27 +317,66 @@ void DensityPDFClustering::loadVoroCIC(char * t_volumes_snapshot_filename_base) 
 				position[j] =  ((double) temp_position[j])*1.e-3;
 			}
 			volume = (double) volumes[id];
-			log_density_ratio = 1./volume/pdf_mean_density - 1.;
+			log_density_ratio = log10(1./volume/pdf_mean_density);
 			distributePDFCIC(position, log_density_ratio, volume);
 		}
 		fclose(snapshot_file);
 		fclose(id_file);
 	}
-	std::vector<double>	mean_density_pdf(num_sample_points, 0.);
-	#pragma omp parallel for
 	for(int i = 0; i < num_mesh_r; i++) {
-		for(unsigned long j = 0; j < density_pdf_meshes.size(); j++) {
-			density_pdf_meshes[j][i] /= density_mesh[i];
-			#pragma omp atomic
-			mean_density_pdf[j] += density_pdf_meshes[j][i];
-		}
-		density_mesh[i] = density_mesh[i]/mean_num_bin_particles - 1.;
-	}
-	for(unsigned long i = 0; i < density_pdf_meshes.size(); i++) {
-		mean_density_pdf[i] /= num_mesh_r;
 		#pragma omp parallel for
-		for(int j = 0;  j < num_mesh_r; j++)
-			density_pdf_meshes[i][j] = density_pdf_meshes[i][j]/mean_density_pdf[i] - 1.;	
+		for(unsigned long j = 0; j < density_pdf_meshes.size(); j++) {
+			if(density_mesh[i] != 0.) {
+				mean_density_pdf[j] += density_pdf_meshes[j][i];
+				if(density_mesh[i] != 0)
+					density_pdf_meshes[j][i] /= density_mesh[i];
+			}
+		}
+	}
+	/*
+	char filename[200];
+	sprintf(filename, "test_hists.dat");
+	FILE * testfile = fopen(filename, "wb");
+	std::vector<float> outvector(num_sample_points);
+	std::vector<float> xs(kde_sample_points.size());
+	for(int i = 0; i < num_sample_points; i++) {
+		outvector[i] = (float) pow(10., kde_sample_points[i]);
+		xs[i] = outvector[i];
+	}
+	std::vector<float> dxs(kde_sample_points.size(), 1.);
+	*//*
+	for(int i = 0; i < num_sample_points-1; i++) {
+		dxs[i] = (float) kde_sample_points[i+1] - kde_sample_points[i];
+	}
+	dxs[num_sample_points-1] = 2*kde_sample_points[num_sample_points-1] - kde_sample_points[num_sample_points-2];
+	*//*
+	fwrite(&num_sample_points, sizeof(unsigned int), 1, testfile);
+	fwrite(outvector.data(), sizeof(float), num_sample_points, testfile);
+	for(int i = 0; i < num_sample_points; i++)
+		outvector[i] = (float) mean_density_pdf[i]/xs[i]/volumes.size()/log(10.)/dxs[i];
+	fwrite(&num_sample_points, sizeof(unsigned int), 1, testfile);
+	fwrite(outvector.data(), sizeof(float), num_sample_points, testfile);
+	float norm;
+	for(int i = 0; i < num_mesh_r; i++) {
+		for(int j = 0; j < num_sample_points; j++)
+			outvector[j] = (float) density_pdf_meshes[j][i]/xs[j]/log(10.)/dxs[j];
+		fwrite(&num_sample_points, sizeof(unsigned int), 1, testfile);
+		norm = (float) density_mesh[i];
+		fwrite(&norm, sizeof(float), 1, testfile);
+		fwrite(outvector.data(), sizeof(float), num_sample_points, testfile);
+	}
+	fclose(testfile);
+	*/
+	for(unsigned long i = 0; i < density_pdf_meshes.size(); i++) {
+		mean_density_pdf[i] /= volumes.size();
+		#pragma omp parallel for
+		for(int j = 0;  j < num_mesh_r; j++) {
+			if(mean_density_pdf[i] != 0.)
+				density_pdf_meshes[i][j] = density_pdf_meshes[i][j]/mean_density_pdf[i] - 1.;	
+			else
+				density_pdf_meshes[i][j] = 0.;
+		}	
+		mean_density_pdf[i] = mean_density_pdf[i]/pow(10., kde_sample_points[i])/log(10.);
 	}
 	return;
 }
@@ -349,16 +389,14 @@ void DensityPDFClustering::distributePDFCIC(std::vector<double> & t_position, do
 	for(int i = 0; i < 3; i++) {
 		mesh_indices[i] = (int) floor(t_position[i]/bin_length);
 		mesh_indices[i + 3] = (mesh_indices[i] + 1)%num_mesh_1d;
-		weights[i] = 1. + mesh_indices[i] - t_position[i]/bin_length;
-		weights[i + 3] = 1. - weights[i];
+		weights[i + 3] = t_position[i]/bin_length - mesh_indices[i];
+		weights[i] = 1. - weights[i + 3];
 	}
 	for(int i = 0; i < 2; i++) {
 		for(int j = 0; j < 2; j++) {
 			for(int k = 0; k < 2; k++) {
 				index = getMeshIndex(mesh_indices[3*i], mesh_indices[1 + 3*j], mesh_indices[2 + 3*k]);
-				weight = t_volume*weights[2 + 3*k]*weights[1 + 3*j]*weights[3*i];
-				#pragma omp atomic
-				density_mesh[index] += weight;
+				weight = weights[3*i]*weights[1 + 3*j]*weights[2 + 3*k];
 				distributeSampleKernel(index, t_log_density_ratio, weight);
 			}
 		}
@@ -366,7 +404,7 @@ void DensityPDFClustering::distributePDFCIC(std::vector<double> & t_position, do
 	return;
 }
 
-void DensityPDFClustering::distributeSampleKernel(int & t_index, double & t_log_density_ratio, double & weight) {
+void DensityPDFClustering::distributeSampleKernel(int & t_index, double & t_log_density_ratio, double & t_weight) {
 	if(min_edge_density < t_log_density_ratio && max_edge_density > t_log_density_ratio) {
 		int start_sample_index = (int) floor((t_log_density_ratio - log_min_density)/sample_width) - half_num_sample_points_per_sample;
 		if(start_sample_index < 0)
@@ -376,15 +414,18 @@ void DensityPDFClustering::distributeSampleKernel(int & t_index, double & t_log_
 			max_sample_index = num_sample_points - 1;
 		for(int i = start_sample_index; i <= max_sample_index; i++) {
 			#pragma omp atomic
-			density_pdf_meshes[i][t_index] += getGaussianKernalValue(kde_sample_points[i], kernel_width, t_log_density_ratio)*weight;
+			density_pdf_meshes[i][t_index] += getGaussianKernalValue(kde_sample_points[i], kernel_width, t_log_density_ratio)*t_weight;
 		}
 	}
+	#pragma omp atomic
+	density_mesh[t_index] += t_weight;
 	return;
 }
 
 double DensityPDFClustering::getGaussianKernalValue(double & t_mean, double & t_sigma, double & t_x) {
 	return exp(-pow((t_x - t_mean)/t_sigma , 2)/2.)/sqrt(2.*PI_VALUE::PI)/t_sigma;
 }
+
 void DensityPDFClustering::computeMatterPowerSpectrum() {
 	fftw_init_threads(); 
 	fftw_plan_with_nthreads(num_threads);  
@@ -524,37 +565,63 @@ void DensityPDFClustering::computePDFCrossPowerSpectrum(char * t_powers_filename
 				cross_powers[i] *= power_normalization/num_modes[i];
 			}
   		}
-		appendPowers(t_powers_filename, cross_powers);
-		appendPowers(t_powers_filename, pdf_powers);
+		appendVector(t_powers_filename, cross_powers);
+		appendVector(t_powers_filename, pdf_powers);
 	}
 	return;
 }
 
-void DensityPDFClustering::writePowers(char * t_powers_filename) {
-	FILE * powers_file = fopen(t_powers_filename, "wb");
-	if (!powers_file){
+void DensityPDFClustering::writeVector(char * t_filename, std::vector<float> & t_vector) {
+	FILE * file = fopen(t_filename, "wb");
+	if (!file){
 		fprintf(stdout, "Cannot open file for power spectra output\n");
 		exit(0);
 	}
-	unsigned long size = wave_numbers.size();
-	fwrite(&size, sizeof(unsigned long), 1, powers_file);
-	fwrite(wave_numbers.data(), sizeof(double), size, powers_file);
-	fwrite(&size, sizeof(unsigned long), 1, powers_file);
-	fwrite(matter_powers.data(), sizeof(double), size, powers_file);
-	fclose(powers_file);
+	unsigned int size = (unsigned int) t_vector.size();
+	fwrite(&size, sizeof(unsigned int), 1, file);
+	fwrite(t_vector.data(), sizeof(float), size, file);
+	fclose(file);
 	return;
 }
 
-void DensityPDFClustering::appendPowers(char * t_powers_filename, std::vector<double> & t_powers) {
-	FILE * powers_file = fopen(t_powers_filename, "ab");
-	if (!powers_file){
+void DensityPDFClustering::appendVector(char * t_filename, std::vector<float> & t_vector) {
+	FILE * file = fopen(t_filename, "ab");
+	if (!file){
 		fprintf(stdout, "Cannot open file for power spectra output\n");
 		exit(0);
 	}
-	unsigned long size = t_powers.size();
-	fwrite(&size, sizeof(unsigned long), 1, powers_file);
-	fwrite(t_powers.data(), sizeof(double), size, powers_file);
-	fclose(powers_file);
+	unsigned int size = (unsigned int) t_vector.size();
+	fwrite(&size, sizeof(unsigned int), 1, file);
+	fwrite(t_vector.data(), sizeof(float), size, file);
+	fclose(file);
+	return;
+}
+
+void DensityPDFClustering::writeVector(char * t_filename, std::vector<double> & t_vector) {
+	FILE * file = fopen(t_filename, "wb");
+	if (!file){
+		fprintf(stdout, "Cannot open file for power spectra output\n");
+		exit(0);
+	}
+	unsigned int size = (unsigned int) t_vector.size();
+	fwrite(&size, sizeof(unsigned int), 1, file);
+	std::vector<float> vector(t_vector.begin(), t_vector.end());
+	fwrite(vector.data(), sizeof(float), size, file);
+	fclose(file);
+	return;
+}
+
+void DensityPDFClustering::appendVector(char * t_filename, std::vector<double> & t_vector) {
+	FILE * file = fopen(t_filename, "ab");
+	if (!file){
+		fprintf(stdout, "Cannot open file for power spectra output\n");
+		exit(0);
+	}
+	unsigned int size = (unsigned int) t_vector.size();
+	fwrite(&size, sizeof(unsigned int), 1, file);
+	std::vector<float> vector(t_vector.begin(), t_vector.end());
+	fwrite(vector.data(), sizeof(float), size, file);
+	fclose(file);
 	return;
 }
 

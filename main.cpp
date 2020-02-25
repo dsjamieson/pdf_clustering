@@ -50,6 +50,6 @@ int main(int argc, char *argv[]){
 		exit(0);
 	}
 	DensityPDFClustering density_pdf_clustering(min_density, max_density, num_sample_points , num_mesh_1d, num_threads);
-	density_pdf_clustering.computePDFClustering(snapshot_filename_base, volumes_filename, volumes_snapshot_filename_base, pdf_clustering_filename);
+	density_pdf_clustering.computePDFClustering(snapshot_filename_base, volumes_snapshot_filename_base, volumes_filename, pdf_clustering_filename);
 	return 0;
 }

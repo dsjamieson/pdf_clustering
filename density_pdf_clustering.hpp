@@ -77,6 +77,7 @@ class DensityPDFClustering {
 	std::vector<double> matter_powers;
 	std::vector<double> pdf_powers;
 	std::vector<double> cross_powers;
+	std::vector<double>	mean_density_pdf;
 
 	void readGadgetHeader(char * t_snapshot_filename_base);
 	void readVolumes(char * t_volumes_filename);
@@ -85,12 +86,14 @@ class DensityPDFClustering {
 	void distributeCIC(std::vector<double> & t_position);
 	void loadVoroCIC(char * t_volumes_snapshot_filename_base);
 	void distributePDFCIC(std::vector<double> & t_position, double & t_log_density_ratio, double & t_volume);
-	void distributeSampleKernel(int & t_index, double & t_log_density_ratio, double & weight);
+	void distributeSampleKernel(int & t_index, double & t_log_density_ratio, double & t_weight);
 	double getGaussianKernalValue(double & t_mean, double & t_sigma, double & t_x);
 	void computeMatterPowerSpectrum();
 	void computePDFCrossPowerSpectrum(char * t_powers_filename);
-	void writePowers(char * t_powers_filename);
-	void appendPowers(char * t_powers_filename, std::vector<double> & t_powers);
+	void writeVector(char * t_filename, std::vector<double> & t_vector);
+	void appendVector(char * t_filename, std::vector<double> & t_vector);
+	void writeVector(char * t_filename, std::vector<float> & t_vector);
+	void appendVector(char * t_filename, std::vector<float> & t_vector);
 	double sinc(double x);
 	int getMeshIndex(int t_i, int t_j, int t_k);
 	int getModeIndex(int t_i, int t_j, int t_k);
